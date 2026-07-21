@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent回答转文本文件</title>
+<!-- CDN 依赖 -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js"></script>
+<style>
+  :root {
+    --primary: #1F4E79;
+    --secondary: #2E75B6;
+    --accent: #C55A11;
+    --highlight: #548235;
+    --gray: #595959;
+    --light-bg: #F2F7FB;
+    --callout-bg: #FFF3E0;
+    --conclusion-bg: #E8F5E9;
+    --border: #D0D7DE;
+    --bg: #ffffff;
+    --sidebar-bg: #f6f8fa;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--gray);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  /* 顶部栏 */
+  header {
+    background: linear-gradient(135deg, var(--primary), var(--secondary));
+    color: white;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    flex-shrink: 0;
+  }
+  header h1 { font-size: 18px; font-weight: 600; }
+  .toolbar { display: flex; gap: 8px; }
+  .btn {
+    background: rgba(255,255,255,0.15);
+    color: white;
+    border: 1px solid rgba(255,255,255,0.3);
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s;
+  }
+  .btn:hover { background: rgba(255,255,255,0.3); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-export { background: var(--accent); border-color: var(--accent); }
+  .btn-export:hover { background: #d96a1f; }
+  /* 主体 */
+  main {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+  /* 左侧输入 */
+  .input-panel {
+    width: 45%;
+    min-width: 320px;
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    gap: 12px;
+    overflow: auto;
+  }
+  .panel-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--primary);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .upload-area {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: white;
+  }
+  .upload-area:hover { border-color: var(--secondary); background: var(--light-bg); }
+  .upload-area.dragover { border-color: var(--secondary); background: var(--light-bg); }
+  .upload-area p { font-size: 12px; color: var(--gray); margin-top: 4px; }
+  #fileInput { display: none; }
+  textarea#inputText {
+    flex: 1;
+    min-height: 200px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    font-family: -apple-system, "Microsoft YaHei", monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    resize: none;
+    outline: none;
+    background: white;
+    color: #333;
+  }
+  textarea#inputText:focus { border-color: var(--secondary); box-shadow: 0 0 0 3px rgba(46,117,182,0.1); }
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  select#template {
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12px;
+    background: white;
+  }
+  .clear-btn {
+    background: transparent;
+    color: var(--gray);
+    border: 1px solid var(--border);
+    padding: 5px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .clear-btn:hover { background: #f0f0f0; }
+  /* 右侧预览 */
+  .preview-panel {
+    flex: 1;
+    overflow: auto;
+    padding: 24px 32px;
+    background: white;
+  }
+  .preview-content {
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  .preview-content h1 {
+    font-size: 22px;
+    color: var(--primary);
+    margin: 20px 0 12px;
+    padding-bottom: 6px;
+    border-bottom: 2px solid var(--primary);
+    font-weight: 700;
+  }
+  .preview-content h2 {
+    font-size: 18px;
+    color: var(--secondary);
+    margin: 18px 0 10px;
+    font-weight: 600;
+  }
+  .preview-content h3 {
+    font-size: 15px;
+    color: var(--accent);
+    margin: 14px 0 8px;
+    font-weight: 600;
+  }
+  .preview-content p {
+    font-size: 14px;
+    line-height: 1.8;
+    color: var(--gray);
+    margin-bottom: 8px;
+  }
+  .preview-content .conclusion {
+    background: var(--conclusion-bg);
+    border-left: 4px solid var(--highlight);
+    padding: 10px 14px;
+    margin: 10px 0;
+    border-radius: 0 6px 6px 0;
+    font-weight: 600;
+    color: #2E5C1A;
+  }
+  .preview-content .callout {
+    background: var(--callout-bg);
+    border-left: 4px solid var(--accent);
+    padding: 10px 14px;
+    margin: 8px 0;
+    border-radius: 0 6px 6px 0;
+    color: var(--accent);
+    font-style: italic;
+  }
+  .preview-content .key-concept {
+    background: var(--callout-bg);
+    border-left: 4px solid var(--accent);
+    padding: 10px 14px;
+    margin: 8px 0;
+    border-radius: 0 6px 6px 0;
+    font-weight: 700;
+    color: var(--accent);
+  }
+  .preview-content .arrow-flow {
+    text-align: center;
+    background: var(--light-bg);
+    padding: 12px;
+    margin: 10px 0;
+    border-radius: 8px;
+    font-weight: 600;
+    color: var(--primary);
+    line-height: 2;
+  }
+  .preview-content .arrow-flow .arrow { color: var(--secondary); font-size: 16px; }
+  .preview-content ul, .preview-content ol {
+    margin: 8px 0 8px 24px;
+    font-size: 14px;
+    line-height: 1.8;
+    color: var(--gray);
+  }
+  .preview-content li { margin-bottom: 4px; }
+  .preview-content code {
+    background: #f0f0f0;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 13px;
+  }
+  .preview-content pre {
+    background: #f6f8fa;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    overflow-x: auto;
+    margin: 8px 0;
+  }
+  .preview-content pre code { background: none; padding: 0; }
+  .preview-content strong { color: var(--primary); font-weight: 700; }
+  .preview-content .highlight-word {
+    background: #FFF59D;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-weight: 600;
+    color: #B71C1C;
+  }
+  .preview-content hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 16px 0;
+  }
+  .placeholder {
+    text-align: center;
+    color: #aaa;
+    font-size: 14px;
+    padding: 60px 20px;
+  }
+  /* 状态栏 */
+  .statusbar {
+    background: var(--sidebar-bg);
+    border-top: 1px solid var(--border);
+    padding: 6px 16px;
+    font-size: 11px;
+    color: var(--gray);
+    display: flex;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .statusbar .stat { color: var(--secondary); font-weight: 600; }
+  /* Toast */
+  #toast {
+    position: fixed;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.85);
+    color: white;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 13px;
+    z-index: 9999;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+  }
+  #toast.show { opacity: 1; }
+  /* 离线提示 */
+  .offline-warning {
+    background: #FFF3CD;
+    border: 1px solid #FFC107;
+    color: #856404;
+    padding: 8px 16px;
+    font-size: 12px;
+    text-align: center;
+    display: none;
+  }
+</style>
+</head>
+<body>
+
+<div class="offline-warning" id="offlineWarning">
+  ⚠️ CDN 库加载失败，已降级为纯文本模式。DOCX/PDF 导出可能不可用，请检查网络连接后刷新。
+</div>
+
+<header>
+  <h1>Agent 回答转文本文件</h1>
+  <div class="toolbar">
+    <button class="btn btn-export" id="exportDocx" onclick="exportDocx()" disabled>DOCX</button>
+    <button class="btn btn-export" id="exportPdf" onclick="exportPdf()" disabled>PDF</button>
+    <button class="btn btn-export" id="exportHtml" onclick="exportHtml()" disabled>HTML</button>
+    <button class="btn btn-export" id="exportMd" onclick="exportMd()" disabled>Markdown</button>
+  </div>
+</header>
+
+<main>
+  <div class="input-panel">
+    <div class="panel-title">
+      <span>输入区</span>
+      <button class="clear-btn" onclick="clearAll()">清空</button>
+    </div>
+    <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+      <div style="font-size:24px;">📄</div>
+      <p><strong>点击上传</strong> 或拖拽 Markdown / TXT 文件到此处</p>
+      <input type="file" id="fileInput" accept=".md,.txt,.markdown" onchange="handleFile(event)">
+    </div>
+    <textarea id="inputText" placeholder="或在此处粘贴 Agent 的回答内容...&#10;&#10;粘贴后右侧自动实时预览。"></textarea>
+    <div class="controls">
+      <select id="template">
+        <option value="academic">学术阅读模板（推荐）</option>
+        <option value="clean">简洁模板</option>
+      </select>
+      <span style="font-size:11px;color:#999;">| 智能识别：标题 / 结论 / 箭头流 / 列表</span>
+    </div>
+  </div>
+
+  <div class="preview-panel">
+    <div class="preview-content" id="preview">
+      <div class="placeholder">
+        在左侧粘贴或上传 Agent 回答<br>右侧将实时显示增强排版后的预览
+      </div>
+    </div>
+  </div>
+</main>
+
+<div class="statusbar">
+  <span id="statusLeft">就绪</span>
+  <span id="statusRight">识别：0 标题 / 0 结论 / 0 箭头流</span>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ============ 全局状态 ============
+let parsedBlocks = [];
+let stats = { headings: 0, conclusions: 0, arrowFlows: 0 };
+
+// ============ CDN 可用性检测 ============
+window.addEventListener('load', function() {
+  setTimeout(function() {
+    if (typeof marked === 'undefined' || typeof saveAs === 'undefined') {
+      document.getElementById('offlineWarning').style.display = 'block';
+      showToast('部分 CDN 库加载失败，功能受限');
+    }
+  }, 3000);
+});
+
+// ============ Toast 提示 ============
+function showToast(msg, duration) {
+  duration = duration || 2500;
+  var toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(function() { toast.classList.remove('show'); }, duration);
+}
+
+// ============ 文件上传处理 ============
+var uploadArea = document.getElementById('uploadArea');
+uploadArea.addEventListener('dragover', function(e) {
+  e.preventDefault();
+  uploadArea.classList.add('dragover');
+});
+uploadArea.addEventListener('dragleave', function(e) {
+  uploadArea.classList.remove('dragover');
+});
+uploadArea.addEventListener('drop', function(e) {
+  e.preventDefault();
+  uploadArea.classList.remove('dragover');
+  if (e.dataTransfer.files.length > 0) {
+    handleFile({ target: { files: e.dataTransfer.files } });
+  }
+});
+
+function handleFile(event) {
+  var file = event.target.files[0];
+  if (!file) return;
+  var ext = file.name.split('.').pop().toLowerCase();
+  if (['md', 'txt', 'markdown'].indexOf(ext) === -1) {
+    showToast('仅支持 .md / .txt / .markdown 文件');
+    return;
+  }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    document.getElementById('inputText').value = e.target.result;
+    renderPreview();
+    showToast('已加载文件：' + file.name);
+  };
+  reader.readAsText(file);
+}
+
+// ============ 清空 ============
+function clearAll() {
+  document.getElementById('inputText').value = '';
+  document.getElementById('fileInput').value = '';
+  renderPreview();
+}
+
+// ============ 结构识别器 + 强调标注器 ============
+// 将原始文本解析为结构化块，保留原始顺序，只标注类型
+function parseContent(text) {
+  if (!text || !text.trim()) return [];
+  var lines = text.split('\n');
+  var blocks = [];
+  var i = 0;
+
+  while (i < lines.length) {
+    var line = lines[i];
+    var trimmed = line.trim();
+
+    // 空行
+    if (trimmed === '') {
+      i++;
+      continue;
+    }
+
+    // 代码块 ```
+    if (trimmed.startsWith('```')) {
+      var codeLines = [trimmed];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      if (i < lines.length) { codeLines.push(lines[i]); i++; }
+      blocks.push({ type: 'code', content: codeLines.join('\n') });
+      continue;
+    }
+
+    // 箭头流：预扫描判断当前行是否属于箭头流区域
+    // 箭头流 = 连续非空行中至少有一行是箭头(↓/→)，且文本行较短
+    if (isInArrowFlowRegion(lines, i)) {
+      var flowLines = [];
+      while (i < lines.length) {
+        var tl = lines[i].trim();
+        if (tl === '') { i++; break; }
+        // 箭头流中的行：箭头行、短文本行（<50字）、含+/|的连接行
+        if (isArrowLine(tl) || tl.length < 50) {
+          // 如果遇到明显不是箭头流的内容（长段落、列表项、代码），停止
+          if (!isArrowLine(tl) && /^([-*•]|\d+[.)]|\(\d+\))\s+/.test(tl)) break;
+          if (tl.startsWith('```')) break;
+          flowLines.push(tl);
+          i++;
+        } else {
+          break;
+        }
+      }
+      if (flowLines.length >= 2 && flowLines.some(isArrowLine)) {
+        blocks.push({ type: 'arrowFlow', content: flowLines });
+        continue;
+      } else {
+        // 不是真正的箭头流，回退处理第一行
+        blocks.push({ type: 'paragraph', content: flowLines[0] });
+        continue;
+      }
+    }
+
+    // Markdown 标题 ## ###
+    var hMatch = /^(#{1,6})\s+(.+)$/.exec(trimmed);
+    if (hMatch) {
+      blocks.push({ type: 'heading', level: hMatch[1].length, content: hMatch[2] });
+      i++;
+      continue;
+    }
+
+    // 标题识别：第X阶段/第X周/Step X/数字.后接冒号/短行无标点
+    var titleMatch = isTitleLine(trimmed);
+    if (titleMatch) {
+      blocks.push({ type: 'heading', level: titleMatch.level, content: trimmed.replace(/[:：]$/, '') });
+      i++;
+      continue;
+    }
+
+    // 列表项：- * • 数字. (1)
+    var listMatch = /^([-*•]|\d+[.)]|\(\d+\))\s+(.+)$/.exec(trimmed);
+    if (listMatch) {
+      var listItems = [];
+      var listType = /^\d/.test(listMatch[1]) ? 'ol' : 'ul';
+      while (i < lines.length) {
+        var lm = /^([-*•]|\d+[.)]|\(\d+\))\s+(.+)$/.exec(lines[i].trim());
+        if (lm) {
+          listItems.push(lm[2]);
+          i++;
+        } else if (lines[i].trim() === '') {
+          // 检查下一行是否还是列表
+          if (i + 1 < lines.length && /^([-*•]|\d+[.)]|\(\d+\))\s+/.test(lines[i+1].trim())) {
+            i++;
+          } else {
+            break;
+          }
+        } else {
+          break;
+        }
+      }
+      blocks.push({ type: 'list', listType: listType, items: listItems });
+      continue;
+    }
+
+    // 结论句/核心问题：包含关键词且较短
+    if (isConclusionLine(trimmed)) {
+      blocks.push({ type: 'conclusion', content: trimmed });
+      i++;
+      continue;
+    }
+
+    // 重点概念：以 >> 开头或包含「核心/关键/最重要」
+    if (trimmed.startsWith('>>') || /(^|[^a-zA-Z])(核心|关键|最重要|重点|注意)([^a-zA-Z]|$)/.test(trimmed) && trimmed.length < 80) {
+      blocks.push({ type: 'keyConcept', content: trimmed.replace(/^>>\s*/, '') });
+      i++;
+      continue;
+    }
+
+    // 普通段落
+    blocks.push({ type: 'paragraph', content: trimmed });
+    i++;
+  }
+
+  return blocks;
+}
+
+function isArrowLine(line) {
+  if (line === '↓' || line === '→' || line === '|') return true;
+  if (/^[↓→\s|]+$/.test(line) && line.length < 10) return true;
+  return false;
+}
+
+// 检查从第 startIdx 行开始是否属于箭头流区域
+// 判断逻辑：从当前行向后扫描，在遇到空行之前，是否有至少一个箭头行
+function isInArrowFlowRegion(lines, startIdx) {
+  var count = 0;
+  for (var j = startIdx; j < lines.length && count < 20; j++) {
+    var tl = lines[j].trim();
+    if (tl === '') break;
+    // 遇到代码块、列表项、长段落，不是箭头流
+    if (tl.startsWith('```')) break;
+    if (/^([-*•]|\d+[.)]|\(\d+\))\s+/.test(tl)) break;
+    if (tl.length > 50) break;
+    if (isArrowLine(tl)) return true;
+    count++;
+  }
+  return false;
+}
+
+function isTitleLine(line) {
+  // 第X阶段/第X部分
+  if (/^第[一二三四五六七八九十\d]+(阶段|部分|章|节|周)/.test(line)) return { level: 1 };
+  // Step X / 步骤X
+  if (/^(Step\s*\d+|步骤\s*\d+)/i.test(line)) return { level: 2 };
+  // Module X / 模块X
+  if (/^(Module\s*\d+|模块\s*\d+)/i.test(line)) return { level: 2 };
+  // 方法X：/ 问题X：
+  if (/^(方法|问题|方向)\s*\d+\s*[:：]/.test(line)) return { level: 2 };
+  // 短行（3-25字）无尾标点，且不含箭头，可能是标题
+  // 排除：以常见连词开头的句子、纯英文单词、问句
+  if (line.length >= 3 && line.length < 25 && !/[。，；！？、]$/.test(line) && !/[↓→]/.test(line)) {
+    if (/[\u4e00-\u9fff]/.test(line)) {
+      // 排除看起来像普通句子的开头
+      if (!/^(所以|于是|但是|因为|如果|那么|例如|比如|不过|而且|并且|简单说|注意|问题[：:])/.test(line)) {
+        // 排除问句（包含？的）
+        if (!/[?？]/.test(line)) {
+          return { level: 3 };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function isConclusionLine(line) {
+  if (line.length > 120) return false;
+  var keywords = ['核心问题', '目标是', '目标：', '总结', '所以核心', '这是整个', '真正的问题', '真正解决'];
+  for (var k = 0; k < keywords.length; k++) {
+    if (line.indexOf(keywords[k]) !== -1) return true;
+  }
+  return false;
+}
+
+// ============ 行内高亮处理 ============
+function highlightInline(text) {
+  // 高亮关键词
+  var keywords = ['核心', '关键', '最重要', '重点', '注意', '不要', '错误', '失败'];
+  var result = escapeHtml(text);
+  keywords.forEach(function(kw) {
+    var re = new RegExp(kw, 'g');
+    result = result.replace(re, '<span class="highlight-word">' + kw + '</span>');
+  });
+  return result;
+}
+
+function escapeHtml(text) {
+  var div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// ============ 模板渲染器 ============
+function renderBlocks(blocks) {
+  var html = '';
+  stats = { headings: 0, conclusions: 0, arrowFlows: 0 };
+
+  blocks.forEach(function(block) {
+    switch (block.type) {
+      case 'heading':
+        stats.headings++;
+        html += '<h' + Math.min(block.level + 1, 6) + '>' + highlightInline(block.content) + '</h' + Math.min(block.level + 1, 6) + '>';
+        break;
+      case 'conclusion':
+        stats.conclusions++;
+        html += '<div class="conclusion">' + highlightInline(block.content) + '</div>';
+        break;
+      case 'keyConcept':
+        html += '<div class="key-concept">' + highlightInline(block.content) + '</div>';
+        break;
+      case 'callout':
+        html += '<div class="callout">' + highlightInline(block.content) + '</div>';
+        break;
+      case 'arrowFlow':
+        stats.arrowFlows++;
+        var flowHtml = block.content.map(function(line) {
+          if (isArrowLine(line)) return '<span class="arrow">' + escapeHtml(line) + '</span>';
+          return escapeHtml(line);
+        }).join('<br>');
+        html += '<div class="arrow-flow">' + flowHtml + '</div>';
+        break;
+      case 'list':
+        var tag = block.listType;
+        html += '<' + tag + '>';
+        block.items.forEach(function(item) {
+          html += '<li>' + highlightInline(item) + '</li>';
+        });
+        html += '</' + tag + '>';
+        break;
+      case 'code':
+        var codeContent = block.content.replace(/^```\w*\n?/, '').replace(/\n?```$/, '');
+        html += '<pre><code>' + escapeHtml(codeContent) + '</code></pre>';
+        break;
+      case 'paragraph':
+      default:
+        html += '<p>' + highlightInline(block.content) + '</p>';
+        break;
+    }
+  });
+
+  return html;
+}
+
+// ============ 实时预览 ============
+var inputText = document.getElementById('inputText');
+var preview = document.getElementById('preview');
+var debounceTimer = null;
+
+inputText.addEventListener('input', function() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(renderPreview, 300);
+});
+
+function renderPreview() {
+  var text = inputText.value;
+  if (!text.trim()) {
+    preview.innerHTML = '<div class="placeholder">在左侧粘贴或上传 Agent 回答<br>右侧将实时显示增强排版后的预览</div>';
+    parsedBlocks = [];
+    updateStatus();
+    setExportButtons(false);
+    return;
+  }
+
+  parsedBlocks = parseContent(text);
+  var html = renderBlocks(parsedBlocks);
+  preview.innerHTML = html;
+  updateStatus();
+  setExportButtons(true);
+}
+
+function updateStatus() {
+  document.getElementById('statusLeft').textContent =
+    parsedBlocks.length > 0 ? '已解析 ' + parsedBlocks.length + ' 个内容块' : '就绪';
+  document.getElementById('statusRight').textContent =
+    '识别：' + stats.headings + ' 标题 / ' + stats.conclusions + ' 结论 / ' + stats.arrowFlows + ' 箭头流';
+}
+
+function setExportButtons(enabled) {
+  var btns = ['exportDocx', 'exportPdf', 'exportHtml', 'exportMd'];
+  btns.forEach(function(id) {
+    document.getElementById(id).disabled = !enabled;
+  });
+}
+
+// ============ 导出：Markdown ============
+function exportMd() {
+  if (parsedBlocks.length === 0) { showToast('没有内容可导出'); return; }
+  var md = '';
+  parsedBlocks.forEach(function(block) {
+    switch (block.type) {
+      case 'heading':
+        md += '\n' + '#'.repeat(block.level) + ' ' + block.content + '\n\n';
+        break;
+      case 'conclusion':
+      case 'keyConcept':
+        md += '> **' + block.content + '**\n\n';
+        break;
+      case 'callout':
+        md += '> *' + block.content + '*\n\n';
+        break;
+      case 'arrowFlow':
+        md += '```\n' + block.content.join('\n') + '\n```\n\n';
+        break;
+      case 'list':
+        block.items.forEach(function(item, idx) {
+          if (block.listType === 'ol') {
+            md += (idx + 1) + '. ' + item + '\n';
+          } else {
+            md += '- ' + item + '\n';
+          }
+        });
+        md += '\n';
+        break;
+      case 'code':
+        md += block.content + '\n\n';
+        break;
+      default:
+        md += block.content + '\n\n';
+    }
+  });
+  var blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+  saveAs(blob, getFilename('md'));
+  showToast('Markdown 已导出');
+}
+
+// ============ 导出：HTML ============
+function exportHtml() {
+  if (parsedBlocks.length === 0) { showToast('没有内容可导出'); return; }
+  var contentHtml = renderBlocks(parsedBlocks);
+  var fullHtml = '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n<meta charset="UTF-8">\n';
+  fullHtml += '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n';
+  fullHtml += '<title>Agent回答文档</title>\n';
+  fullHtml += '<style>\n' + getExportStyles() + '\n</style>\n';
+  fullHtml += '</head>\n<body>\n<div class="document">\n';
+  fullHtml += contentHtml;
+  fullHtml += '\n</div>\n</body>\n</html>';
+  var blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
+  saveAs(blob, getFilename('html'));
+  showToast('HTML 已导出');
+}
+
+function getExportStyles() {
+  return `
+    body { font-family: -apple-system, "Microsoft YaHei", "PingFang SC", Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #333; line-height: 1.8; }
+    h1 { color: #1F4E79; border-bottom: 2px solid #1F4E79; padding-bottom: 6px; }
+    h2 { color: #2E75B6; } h3 { color: #C55A11; }
+    .conclusion { background: #E8F5E9; border-left: 4px solid #548235; padding: 10px 14px; margin: 10px 0; border-radius: 0 6px 6px 0; font-weight: 600; color: #2E5C1A; }
+    .callout { background: #FFF3E0; border-left: 4px solid #C55A11; padding: 10px 14px; margin: 8px 0; border-radius: 0 6px 6px 0; color: #C55A11; font-style: italic; }
+    .key-concept { background: #FFF3E0; border-left: 4px solid #C55A11; padding: 10px 14px; margin: 8px 0; border-radius: 0 6px 6px 0; font-weight: 700; color: #C55A11; }
+    .arrow-flow { text-align: center; background: #F2F7FB; padding: 12px; margin: 10px 0; border-radius: 8px; font-weight: 600; color: #1F4E79; line-height: 2; }
+    .arrow-flow .arrow { color: #2E75B6; }
+    .highlight-word { background: #FFF59D; padding: 1px 4px; border-radius: 3px; font-weight: 600; color: #B71C1C; }
+    pre { background: #f6f8fa; border: 1px solid #D0D7DE; border-radius: 6px; padding: 12px; overflow-x: auto; }
+    code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; font-family: "SF Mono", Consolas, monospace; }
+    pre code { background: none; padding: 0; }
+    strong { color: #1F4E79; }
+  `;
+}
+
+// ============ 导出：PDF ============
+function exportPdf() {
+  if (parsedBlocks.length === 0) { showToast('没有内容可导出'); return; }
+  if (typeof html2pdf === 'undefined') {
+    showToast('PDF 库未加载，请检查网络');
+    return;
+  }
+  showToast('正在生成 PDF...', 5000);
+  var contentHtml = renderBlocks(parsedBlocks);
+  var tempDiv = document.createElement('div');
+  tempDiv.style.cssText = 'max-width:700px;margin:0 auto;padding:20px;font-family:-apple-system,"Microsoft YaHei",Arial,sans-serif;color:#333;';
+  tempDiv.innerHTML = '<style>' + getExportStyles() + '</style>' + contentHtml;
+
+  var opt = {
+    margin: [15, 15, 15, 15],
+    filename: getFilename('pdf'),
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { scale: 2, useCORS: true },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+    pagebreak: { mode: 'avoid-all' }
+  };
+  html2pdf().set(opt).from(tempDiv).save().then(function() {
+    showToast('PDF 已导出');
+  }).catch(function(err) {
+    showToast('PDF 生成失败：' + err.message);
+  });
+}
+
+// ============ 导出：DOCX ============
+function exportDocx() {
+  if (parsedBlocks.length === 0) { showToast('没有内容可导出'); return; }
+  if (typeof docx === 'undefined') {
+    showToast('DOCX 库未加载，请检查网络');
+    return;
+  }
+  showToast('正在生成 DOCX...', 5000);
+
+  try {
+    var docxLib = docx;
+    var children = [];
+
+    parsedBlocks.forEach(function(block) {
+      switch (block.type) {
+        case 'heading':
+          var headingLevel = Math.min(block.level, 3);
+          var headingRun = new docxLib.TextRun({
+            text: block.content,
+            bold: true,
+            size: headingLevel === 1 ? 36 : (headingLevel === 2 ? 28 : 24),
+            color: headingLevel === 1 ? '1F4E79' : (headingLevel === 2 ? '2E75B6' : 'C55A11'),
+            font: { ascii: 'Arial', hAnsi: 'Arial', eastAsia: 'Microsoft YaHei' }
+          });
+          children.push(new docxLib.Paragraph({
+            children: [headingRun],
+            spacing: { before: headingLevel === 1 ? 360 : 240, after: 160 }
+          }));
+          break;
+
+        case 'conclusion':
+          children.push(new docxLib.Paragraph({
+            children: [new docxLib.TextRun({
+              text: block.content,
+              bold: true,
+              size: 22,
+              color: '2E5C1A',
+              font: { ascii: 'Arial', hAnsi: 'Arial', eastAsia: 'Microsoft YaHei' }
+            })],
+            spacing: { before: 120, after: 120, line: 300 },
+            shading: { fill: 'E8F5E9', type: docxLib.ShadingType.CLEAR },
+            indent: { left: 360 }
+          }));
+          break;
+
+        case 'keyConcept':
+          children.push(new docxLib.Paragraph({
+            children: [new docxLib.TextRun({
+              text: '>> ' + block.content,
+              bold: true,
+              size: 22,
+              color: 'C55A11',
+              font: { ascii: 'Arial', hAnsi: 'Arial', eastAsia: 'Microsoft YaHei' }
+            })],
+            spacing: { before: 100, after: 100, line: 300 },
+            shading: { fill: 'FFF3E0', type: docxLib.ShadingType.CLEAR },
+            indent: { left: 360 }
+          }));
+          break;
+
+        case 'callout':
+          children.push(new docxLib.Paragraph({
+            children: [new docxLib.TextRun({
+              text: block.content,
+              italics: true,
+              size: 22,
+              color: 'C55A11',
+              font: { ascii: 'Arial', hAnsi: 'Arial', eastAsia: 'Microsoft YaHei' }
+            })],
+            spacing: { before: 80, after: 80, line: 300 },
+            shading: { fill: 'FFF3E0', type: docxLib.ShadingType.CLEAR },
+            indent: { left: 360 }
+          }));
+          break;
+
+        case 'arrowFlow':
+          var flowText = block.content.join('  ' + String.fromCharCode(0x2193) + '  ');
+          // 更精确：按行渲染，箭头行用箭头符号
+          var flowRuns = [];
+          block.content.forEach(function(line, idx) {
+            if (idx > 0) {
+              flowRuns.push(new docxLib.TextRun({
+                text: ' ',
+                break: 1,
+                font: { ascii: 'Arial', hAnsi: 'Arial', eastAsia: 'Microsoft YaHei' }
+              }));
+            }
+            if (isArrowLine(line)) {
+              flowRuns.push(new docxLib.TextRun({
+                text: line,
+                bold: true,
+                size: 22,
+                color: '2E75B6',
+                font: { ascii: 'Arial', hAnsi: 'Arial', eastAsia: 'Microsoft YaHei' }
+              }));
+            } else {
+              flowRuns.push(new docxLib.TextRun({
+                text: line,
+                bold: true,
+                size: 22,
+                color: '1F4E79',
+                font: { ascii: 'Arial', hAnsi: 'Arial', eastAsia: 'Microsoft YaHei' }
+              }));
+            }
+          });
+          children.push(new docxLib.Paragraph({
+            children: flowRuns,
+            alignment: docxLib.AlignmentType.CENTER,
+            spacing: { before: 120, after: 120, line: 360 },
+            shading: { fill: 'F2F7FB', type: docxLib.ShadingType.CLEAR }
+          }));
+          break;
+
+        case 'list':
+          block.items.forEach(function(item) {
+            children.push(new docxLib.Paragraph({
+              children: [new docxLib.TextRun({
+                text: (block.listType === 'ol' ? '\u2022 ' : '\u2022 ') + item,
+                size: 22,
+                color: '595959',
+                font: { ascii: 'Arial', hAnsi: 'Arial', eastAsia: 'Microsoft YaHei' }
+              })],
+              spacing: { after: 60, line: 300 },
+              indent: { left: 360 }
+            }));
+          });
+          break;
+
+        case 'code':
+          children.push(new docxLib.Paragraph({
+            children: [new docxLib.TextRun({
+              text: block.content.replace(/^```\w*\n?/, '').replace(/\n?```$/, ''),
+              size: 20,
+              color: '595959',
+              font: { ascii: 'Courier New', hAnsi: 'Courier New' }
+            })],
+            spacing: { before: 80, after: 80 },
+            shading: { fill: 'F6F8FA', type: docxLib.ShadingType.CLEAR }
+          }));
+          break;
+
+        case 'paragraph':
+        default:
+          // 处理行内高亮：将含关键词的段落拆分
+          var paraRuns = buildParagraphRuns(block.content);
+          children.push(new docxLib.Paragraph({
+            children: paraRuns,
+            spacing: { after: 100, line: 300 }
+          }));
+          break;
+      }
+    });
+
+    var doc = new docxLib.Document({
+      styles: {
+        default: {
+          document: {
+            run: {
+              font: { ascii: 'Arial', hAnsi: 'Arial', eastAsia: 'Microsoft YaHei' },
+              size: 22,
+              color: '595959'
+            }
+          }
+        }
+      },
+      sections: [{
+        properties: {
+          page: {
+            size: { width: 11906, height: 16838 },
+            margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
+          }
+        },
+        children: children
+      }]
+    });
+
+    docxLib.Packer.toBlob(doc).then(function(blob) {
+      saveAs(blob, getFilename('docx'));
+      showToast('DOCX 已导出');
+    }).catch(function(err) {
+      showToast('DOCX 生成失败：' + err.message);
+    });
+  } catch (err) {
+    showToast('DOCX 生成出错：' + err.message);
+    console.error(err);
+  }
+}
+
+// 构建段落 runs，处理行内高亮关键词
+function buildParagraphRuns(text) {
+  var keywords = ['核心', '关键', '最重要', '重点', '注意', '不要', '错误', '失败'];
+  var segments = [{ text: text, highlight: false }];
+  var docxLib = docx;
+
+  keywords.forEach(function(kw) {
+    var newSegments = [];
+    segments.forEach(function(seg) {
+      if (!seg.highlight) {
+        var parts = seg.text.split(kw);
+        if (parts.length > 1) {
+          for (var i = 0; i < parts.length; i++) {
+            if (parts[i]) newSegments.push({ text: parts[i], highlight: false });
+            if (i < parts.length - 1) newSegments.push({ text: kw, highlight: true });
+          }
+        } else {
+          newSegments.push(seg);
+        }
+      } else {
+        newSegments.push(seg);
+      }
+    });
+    segments = newSegments;
+  });
+
+  return segments.map(function(seg) {
+    if (seg.highlight) {
+      return new docxLib.TextRun({
+        text: seg.text,
+        bold: true,
+        size: 22,
+        color: 'B71C1C',
+        font: { ascii: 'Arial', hAnsi: 'Arial', eastAsia: 'Microsoft YaHei' },
+        highlight: 'yellow'
+      });
+    }
+    return new docxLib.TextRun({
+      text: seg.text,
+      size: 22,
+      color: '595959',
+      font: { ascii: 'Arial', hAnsi: 'Arial', eastAsia: 'Microsoft YaHei' }
+    });
+  });
+}
+
+// ============ 文件名生成 ============
+function getFilename(ext) {
+  var now = new Date();
+  var dateStr = now.getFullYear() + '-' +
+    String(now.getMonth() + 1).padStart(2, '0') + '-' +
+    String(now.getDate()).padStart(2, '0');
+  return 'agent回答_' + dateStr + '.' + ext;
+}
+
+// ============ 初始化 ============
+renderPreview();
+</script>
+
+</body>
+</html>
