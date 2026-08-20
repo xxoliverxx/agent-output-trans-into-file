@@ -100,21 +100,31 @@
   .upload-area.dragover { border-color: var(--secondary); background: var(--light-bg); }
   .upload-area p { font-size: 12px; color: var(--gray); margin-top: 4px; }
   #fileInput { display: none; }
-  textarea#inputText {
+  #inputText {
     flex: 1;
     min-height: 200px;
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 12px;
-    font-family: -apple-system, "Microsoft YaHei", monospace;
+    font-family: -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
     font-size: 13px;
     line-height: 1.6;
-    resize: none;
     outline: none;
     background: white;
     color: #333;
+    overflow: auto;
   }
-  textarea#inputText:focus { border-color: var(--secondary); box-shadow: 0 0 0 3px rgba(46,117,182,0.1); }
+  #inputText:empty:before { content: attr(data-placeholder); color: #8c959f; white-space: pre-line; }
+  #inputText:focus { border-color: var(--secondary); box-shadow: 0 0 0 3px rgba(46,117,182,0.1); }
+  /* 粘贴时保留语义结构，但统一控制字号与段距，避免继承 WPS 的外观样式。 */
+  #inputText h1, #inputText h2, #inputText h3 { color: #1F4E79; margin: 0.8em 0 0.35em; line-height: 1.35; }
+  #inputText h1 { font-size: 1.35em; } #inputText h2 { font-size: 1.18em; } #inputText h3 { font-size: 1.05em; }
+  #inputText p { margin: 0 0 0.55em; line-height: 1.6; }
+  #inputText ul, #inputText ol { margin: 0.25em 0 0.6em 1.4em; padding: 0; line-height: 1.55; }
+  #inputText li { margin: 0.15em 0; }
+  #inputText blockquote { margin: 0.5em 0; padding-left: 0.75em; border-left: 3px solid #9bb9d5; color: #54606b; }
+  #inputText pre { margin: 0.5em 0; padding: 0.65em; background: #f6f8fa; border-radius: 4px; white-space: pre-wrap; }
+  #inputText code { background: #f1f3f5; padding: 0.05em 0.25em; border-radius: 3px; font-family: "SF Mono", Consolas, monospace; }
   .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   select#template {
     padding: 5px 10px;
@@ -402,7 +412,7 @@
       <p><strong>点击上传</strong> 或拖拽 Markdown / TXT 文件到此处</p>
       <input type="file" id="fileInput" accept=".md,.txt,.markdown" onchange="handleFile(event)">
     </div>
-    <textarea id="inputText" placeholder="或在此处粘贴 Agent 的回答内容...&#10;&#10;粘贴后右侧自动实时预览。"></textarea>
+    <div id="inputText" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="或在此处粘贴 Agent 的回答内容…&#10;&#10;会保留标题、加粗、列表和代码；字号、字体与行距会统一为紧凑版式。"></div>
     <div class="controls">
       <select id="template">
         <option value="academic">学术阅读模板（推荐）</option>
@@ -410,7 +420,7 @@
         <option value="plain">普通文档风</option>
         <option value="kami">易读重排风</option>
       </select>
-      <span style="font-size:11px;color:#999;">| 智能识别：标题 / 结论 / 箭头流 / 列表</span>
+      <span style="font-size:11px;color:#999;">| 优先保留：标题 / 粗体 / 列表 / 代码；智能识别仅补充纯文本结构</span>
     </div>
   </div>
 
@@ -481,7 +491,7 @@ function handleFile(event) {
   }
   var reader = new FileReader();
   reader.onload = function(e) {
-    document.getElementById('inputText').value = e.target.result;
+    setPlainInput(e.target.result);
     renderPreview();
     showToast('已加载文件：' + file.name);
   };
@@ -490,9 +500,69 @@ function handleFile(event) {
 
 // ============ 清空 ============
 function clearAll() {
-  document.getElementById('inputText').value = '';
+  setPlainInput('');
   document.getElementById('fileInput').value = '';
   renderPreview();
+}
+
+// ============ 富文本粘贴：保留结构，丢弃来源外观 ============
+// ChatGPT 等页面会同时放入 text/html 和 text/plain。textarea 只能接收后者，
+// 因而原先的标题、粗体和列表在进入本工具的第一步就已经丢失了。
+var inputOrigin = 'text';
+function setPlainInput(text) {
+  var editor = document.getElementById('inputText');
+  editor.textContent = text || '';
+  inputOrigin = 'text';
+}
+
+function sanitizePastedHtml(html) {
+  var source = new DOMParser().parseFromString(html, 'text/html');
+  var allowed = { H1:1,H2:1,H3:1,H4:1,H5:1,H6:1,P:1,BR:1,STRONG:1,B:1,EM:1,I:1,DEL:1,
+    UL:1,OL:1,LI:1,BLOCKQUOTE:1,PRE:1,CODE:1,A:1,HR:1,TABLE:1,THEAD:1,TBODY:1,TR:1,TH:1,TD:1 };
+  function clean(node) {
+    if (node.nodeType === Node.TEXT_NODE) return document.createTextNode(node.nodeValue);
+    if (node.nodeType !== Node.ELEMENT_NODE) return document.createDocumentFragment();
+    var tag = node.tagName.toUpperCase();
+    var out = allowed[tag] ? document.createElement(tag.toLowerCase()) : document.createDocumentFragment();
+    if (tag === 'A' && allowed[tag]) {
+      var href = node.getAttribute('href') || '';
+      if (/^(https?:|mailto:)/i.test(href)) { out.setAttribute('href', href); out.setAttribute('target', '_blank'); }
+    }
+    Array.prototype.forEach.call(node.childNodes, function(child) { out.appendChild(clean(child)); });
+    return out;
+  }
+  var wrapper = document.createElement('div');
+  Array.prototype.forEach.call(source.body.childNodes, function(child) { wrapper.appendChild(clean(child)); });
+  return wrapper.innerHTML;
+}
+
+function htmlToMarkdown(html) {
+  var root = document.createElement('div'); root.innerHTML = html;
+  function walk(node) {
+    if (node.nodeType === Node.TEXT_NODE) return node.nodeValue.replace(/\u00a0/g, ' ');
+    if (node.nodeType !== Node.ELEMENT_NODE) return '';
+    var tag = node.tagName.toLowerCase();
+    var children = Array.prototype.map.call(node.childNodes, walk).join('');
+    if (/^h[1-6]$/.test(tag)) return '#'.repeat(Number(tag[1])) + ' ' + children.trim() + '\n\n';
+    if (tag === 'p' || tag === 'div') return children.trim() + '\n\n';
+    if (tag === 'br') return '\n';
+    if (tag === 'strong' || tag === 'b') return '**' + children + '**';
+    if (tag === 'em' || tag === 'i') return '*' + children + '*';
+    if (tag === 'code' && node.parentElement && node.parentElement.tagName.toLowerCase() !== 'pre') return '`' + children + '`';
+    if (tag === 'pre') return '```\n' + node.textContent.replace(/^\n+|\n+$/g, '') + '\n```\n\n';
+    if (tag === 'li') return children.trim();
+    if (tag === 'ul' || tag === 'ol') return Array.prototype.map.call(node.children, function(li, idx) { return (tag === 'ol' ? (idx + 1) + '. ' : '- ') + walk(li).trim(); }).join('\n') + '\n\n';
+    if (tag === 'blockquote') return children.trim().split('\n').map(function(line) { return '> ' + line; }).join('\n') + '\n\n';
+    if (tag === 'a') { var href = node.getAttribute('href'); return href ? '[' + children + '](' + href + ')' : children; }
+    if (tag === 'hr') return '---\n\n';
+    return children;
+  }
+  return Array.prototype.map.call(root.childNodes, walk).join('').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function getInputText() {
+  var editor = document.getElementById('inputText');
+  return inputOrigin === 'rich' ? htmlToMarkdown(editor.innerHTML) : editor.innerText.replace(/\r/g, '');
 }
 
 // ============ 结构识别器 + 强调标注器 ============
@@ -676,9 +746,11 @@ function isConclusionLine(line) {
 
 // ============ 行内高亮处理 ============
 function highlightInline(text) {
+  // 富文本来源已有作者明确标注的粗体/斜体；不再用关键词二次猜测重点。
+  if (inputOrigin === 'rich') return renderInlineMarkdown(text);
   var config = getTemplateConfig();
   if (!config.inlineHighlight) {
-    return escapeHtml(text);
+    return renderInlineMarkdown(text);
   }
   // 高亮关键词
   var keywords = ['核心', '关键', '最重要', '重点', '注意', '不要', '错误', '失败'];
@@ -687,6 +759,15 @@ function highlightInline(text) {
     var re = new RegExp(kw, 'g');
     result = result.replace(re, '<span class="highlight-word">' + kw + '</span>');
   });
+  return renderInlineMarkdown(result, true);
+}
+
+function renderInlineMarkdown(text, alreadyEscaped) {
+  var result = alreadyEscaped ? text : escapeHtml(text);
+  result = result.replace(/`([^`]+)`/g, '<code>$1</code>');
+  result = result.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  result = result.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
+  result = result.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
   return result;
 }
 
@@ -826,12 +907,24 @@ inputText.addEventListener('input', function() {
   debounceTimer = setTimeout(renderPreview, 300);
 });
 
+inputText.addEventListener('paste', function(event) {
+  var clipboard = event.clipboardData;
+  var html = clipboard && clipboard.getData('text/html');
+  if (!html) return; // Markdown/纯文本保持浏览器默认输入体验。
+  event.preventDefault();
+  var safeHtml = sanitizePastedHtml(html);
+  if (!safeHtml.trim()) { setPlainInput(clipboard.getData('text/plain')); }
+  else { inputText.innerHTML = safeHtml; inputOrigin = 'rich'; }
+  renderPreview();
+  showToast('已保留标题、粗体、列表等结构；已统一来源字号与行距');
+});
+
 document.getElementById('template').addEventListener('change', renderPreview);
 
 function renderPreview() {
   var template = document.getElementById('template').value;
   preview.setAttribute('data-template', template);
-  var text = inputText.value;
+  var text = getInputText();
   if (!text.trim()) {
     preview.innerHTML = '<div class="placeholder">在左侧粘贴或上传 Agent 回答<br>右侧将实时显示增强排版后的预览</div>';
     parsedBlocks = [];
@@ -1022,29 +1115,15 @@ function exportDocx() {
       switch (block.type) {
         case 'heading':
           var headingLevel = Math.min(block.level, 3);
-          var headingRun = new docxLib.TextRun({
-            text: block.content,
-            bold: true,
-            size: headingLevel === 1 ? config.h1Size : (headingLevel === 2 ? config.h2Size : config.h3Size),
-            color: headingLevel === 1 ? config.h1Color : (headingLevel === 2 ? config.h2Color : config.h3Color),
-            font: config.headingFont
-          });
           children.push(new docxLib.Paragraph({
-            children: [headingRun],
+            children: buildParagraphRuns(block.content, { bold: true, size: headingLevel === 1 ? config.h1Size : (headingLevel === 2 ? config.h2Size : config.h3Size), color: headingLevel === 1 ? config.h1Color : (headingLevel === 2 ? config.h2Color : config.h3Color), font: config.headingFont }),
             spacing: { before: headingLevel === 1 ? 360 : 240, after: 160 }
           }));
           break;
 
         case 'conclusion':
           children.push(new docxLib.Paragraph({
-            children: [new docxLib.TextRun({
-              text: block.content,
-              bold: config.name === 'academic',
-              italics: config.name !== 'academic',
-              size: config.bodySize,
-              color: config.conclusionColor,
-              font: config.bodyFont
-            })],
+            children: buildParagraphRuns(block.content, { bold: config.name === 'academic', italics: config.name !== 'academic', size: config.bodySize, color: config.conclusionColor, font: config.bodyFont }),
             spacing: { before: 120, after: 120, line: 300 },
             shading: { fill: config.conclusionBg, type: docxLib.ShadingType.CLEAR },
             indent: { left: 360 }
@@ -1053,13 +1132,7 @@ function exportDocx() {
 
         case 'keyConcept':
           children.push(new docxLib.Paragraph({
-            children: [new docxLib.TextRun({
-              text: (config.hardPrefix || '') + block.content,
-              bold: true,
-              size: config.bodySize,
-              color: config.hardColor,
-              font: config.bodyFont
-            })],
+            children: buildParagraphRuns((config.hardPrefix || '') + block.content, { bold: true, size: config.bodySize, color: config.hardColor, font: config.bodyFont }),
             spacing: { before: 100, after: 100, line: 300 },
             shading: { fill: config.hardBg, type: docxLib.ShadingType.CLEAR },
             indent: { left: 360 }
@@ -1068,13 +1141,7 @@ function exportDocx() {
 
         case 'callout':
           children.push(new docxLib.Paragraph({
-            children: [new docxLib.TextRun({
-              text: block.content,
-              italics: true,
-              size: config.bodySize,
-              color: config.softColor,
-              font: config.bodyFont
-            })],
+            children: buildParagraphRuns(block.content, { italics: true, size: config.bodySize, color: config.softColor, font: config.bodyFont }),
             spacing: { before: 80, after: 80, line: 300 },
             shading: { fill: config.softBg, type: docxLib.ShadingType.CLEAR },
             indent: { left: 360 }
@@ -1125,12 +1192,7 @@ function exportDocx() {
         case 'list':
           block.items.forEach(function(item) {
             children.push(new docxLib.Paragraph({
-              children: [new docxLib.TextRun({
-                text: (block.listType === 'ol' ? '\u2022 ' : '\u2022 ') + item,
-                size: config.bodySize,
-                color: config.bodyColor,
-                font: config.bodyFont
-              })],
+              children: buildParagraphRuns((block.listType === 'ol' ? '\u2022 ' : '\u2022 ') + item),
               spacing: { after: 60, line: 300 },
               indent: { left: 360 }
             }));
@@ -1198,50 +1260,17 @@ function exportDocx() {
   }
 }
 
-// 构建段落 runs，处理行内高亮关键词
-function buildParagraphRuns(text) {
-  var keywords = ['核心', '关键', '最重要', '重点', '注意', '不要', '错误', '失败'];
-  var segments = [{ text: text, highlight: false }];
-  var docxLib = docx;
-
-  keywords.forEach(function(kw) {
-    var newSegments = [];
-    segments.forEach(function(seg) {
-      if (!seg.highlight) {
-        var parts = seg.text.split(kw);
-        if (parts.length > 1) {
-          for (var i = 0; i < parts.length; i++) {
-            if (parts[i]) newSegments.push({ text: parts[i], highlight: false });
-            if (i < parts.length - 1) newSegments.push({ text: kw, highlight: true });
-          }
-        } else {
-          newSegments.push(seg);
-        }
-      } else {
-        newSegments.push(seg);
-      }
-    });
-    segments = newSegments;
-  });
-
+// 构建 DOCX 行内 runs：优先还原来源明确给出的粗体/斜体/代码，而非重新猜重点。
+function buildParagraphRuns(text, base) {
   var config = getTemplateConfig();
-  return segments.map(function(seg) {
-    if (seg.highlight && config.inlineHighlight) {
-      return new docxLib.TextRun({
-        text: seg.text,
-        bold: true,
-        size: config.bodySize,
-        color: 'B71C1C',
-        font: config.bodyFont,
-        highlight: 'yellow'
-      });
-    }
-    return new docxLib.TextRun({
-      text: seg.text,
-      size: config.bodySize,
-      color: config.bodyColor,
-      font: config.bodyFont
-    });
+  base = base || { size: config.bodySize, color: config.bodyColor, font: config.bodyFont };
+  var parts = String(text).split(/(\*\*[^*]+\*\*|`[^`]+`|(?<!\*)\*[^*\n]+\*(?!\*))/g);
+  return parts.filter(function(part) { return part !== ''; }).map(function(part) {
+    var options = Object.assign({}, base, { text: part });
+    if (/^\*\*[^*]+\*\*$/.test(part)) { options.text = part.slice(2, -2); options.bold = true; }
+    else if (/^`[^`]+`$/.test(part)) { options.text = part.slice(1, -1); options.font = { ascii: 'Courier New', hAnsi: 'Courier New' }; }
+    else if (/^\*[^*\n]+\*$/.test(part)) { options.text = part.slice(1, -1); options.italics = true; }
+    return new docx.TextRun(options);
   });
 }
 
