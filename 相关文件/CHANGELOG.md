@@ -124,3 +124,55 @@
   - `getExportStyles()`：根据模板返回不同的 CSS（HTML/PDF 导出用）
   - `exportDocx()`：所有颜色/字体/背景参数改用 config 对象，arrowFlow 支持无背景模式
   - `buildParagraphRuns()`：根据模板配置决定是否启用黄色高亮
+
+### 2026-08-21 — 表格结构保留 + LaTeX 数学公式渲染
+
+- **修改内容**：
+  1. **表格结构保留**：修复富文本粘贴和 Markdown 输入时表格结构丢失的问题
+     - `htmlToMarkdown()`：新增 `<table>` → Markdown table 转换逻辑，遍历 `<tr>`/`<th>`/`<td>` 生成 `| col | col |` 格式
+     - `parseContent()`：新增 Markdown 表格识别（检测 `|` 分隔行 `|---|---|`），生成 `{ type: 'table', headers, rows }` 块
+     - 新增辅助函数 `isMarkdownTable()`、`parseMarkdownTable()`、`splitTableRow()`
+     - `renderBlocks()`：新增 `case 'table'` 渲染为 `<table><thead><tbody>` HTML
+     - `exportDocx()`：新增 `case 'table'` 导出为 docx `Table`/`TableRow`/`TableCell`，表头带背景色
+     - `exportMd()`：新增 `case 'table'` 导出为 Markdown table 语法
+     - CSS：新增预览区和 plain/kami/academic 三套模板的表格样式
+     - `getExportStyles()`：三个模板分支均增加 `table`/`th`/`td` 导出 CSS
+  2. **LaTeX 数学公式渲染**：修复 `\(A_i\)` 等 LaTeX 公式显示为原始文本的问题
+     - 引入 KaTeX CDN（CSS + JS + auto-render），用于预览、PDF、HTML 导出的公式渲染
+     - `renderInlineMarkdown()`：增加 LaTeX 公式保护机制（先提取 `$$...$$`、`\[...\]`、`\(...\)`、`$...$` 到占位符，处理完 Markdown 语法后还原），避免公式中的 `*` 被误解析为斜体
+     - `buildParagraphRuns()`（DOCX 导出）：同样保护 LaTeX 公式，去掉外层分隔符后用 Cambria Math 斜体字体显示（docx 不支持原生 LaTeX 渲染）
+     - `renderPreview()`：预览渲染后调用 `renderMathInElement()` 渲染公式
+     - `exportPdf()`：PDF 导出时在临时容器上调用 KaTeX 渲染
+     - `exportHtml()`：导出的 HTML 引入 KaTeX CDN 并在 body 末尾调用 `renderMathInElement()`
+
+- **修改原因**：用户反馈原始表格数据在转换后结构消失变成一连串文字；LaTeX 数学符号（如 `\(A_i\)`）不能正确转换显示
+
+- **影响范围**：
+  - HTML head：新增 KaTeX CDN（3 个 link/script 标签）
+  - CSS：新增表格样式（约 40 行，含预览区 + 3 套模板 + 输入区）
+  - `htmlToMarkdown()`：新增 table 转换分支
+  - `parseContent()`：新增表格识别分支
+  - 新增 3 个辅助函数：`isMarkdownTable()`、`parseMarkdownTable()`、`splitTableRow()`
+  - `renderInlineMarkdown()`：增加 LaTeX 占位符保护逻辑
+  - `renderBlocks()`：新增 `case 'table'`
+  - `renderPreview()`：增加 KaTeX 渲染调用
+  - `exportMd()`：新增 `case 'table'`
+  - `exportHtml()`：增加 KaTeX CDN + auto-render 脚本
+  - `exportPdf()`：增加 KaTeX 渲染调用
+  - `exportDocx()`：新增 `case 'table'` 导出为 docx Table
+  - `buildParagraphRuns()`：增加 LaTeX 保护 + Cambria Math 字体处理
+  - `getExportStyles()`：三个模板分支均增加表格 CSS
+
+- **验证**：JavaScript 语法检查通过
+
+### 2026-08-23 — DOCX 行间距优化（压缩版式，提升单页内容量）
+
+- **修改内容**：重排 `exportDocx()` 中各内容块的行间距与段前/段后间距，消除原先统一 `line: 300` 造成的行距过大问题，改为按内容角色分档：
+  - 正文段落：`line 260`，段后 60（最紧凑，提高一页承载量）
+  - 标题 H1/H2/H3：`line 260`，段前 280/200/160、段后 100/80/60（层级递减，上方留白、下方紧凑）
+  - 列表项：`line 240`，段后 40（单倍行距，最紧凑）
+  - 代码块：`line 240`，段前/段后各 60
+  - 结论 / 重点概念 / 提示框：`line 280`，段前/段后各 60-80（较正文略松，突出但不过度撑大）
+  - 箭头流：`line 300`，段前/段后各 80（保留流程图呼吸感）
+- **修改原因**：用户反馈生成的 Word 文档行间距过大，导致每页显示内容偏少；同时不希望所有行距一刀切，需兼顾结构化呈现、重点突出与合理的间距分布。
+- **影响范围**：`exportDocx()` 中各 block 分支的 `spacing` 参数。间距在导出函数内硬编码，academic / plain / kami 三套模板的 DOCX 导出统一生效，无需逐模板修改。
