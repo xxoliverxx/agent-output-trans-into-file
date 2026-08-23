@@ -75,6 +75,8 @@ GitHub Pages：https://xxoliverxx.github.io/agent-/
 | 重点概念 | `>>`开头或含"核心/关键/最重要" | 橙色背景 + 加粗 |
 | 箭头流 | 连续短行中含 ↓ → | 浅蓝背景 + 居中 + 箭头高亮 |
 | 列表 | `-` `*` `•` `数字.` | 标准列表样式 |
+| 表格 | `\| col \|` + `\|---\|` 分隔行 | 表头背景色 + 斑马纹边框 |
+| LaTeX 公式 | `\(formula\)` / `$formula$` / `$$formula$$` | KaTeX 渲染为数学公式 |
 | 代码块 | \`\`\` 包裹 | 等宽字体 + 灰底 |
 | 行内关键词 | 核心/关键/最重要/重点/注意/失败 | 黄色背景高亮（仅学术模板） |
 
@@ -91,6 +93,7 @@ GitHub Pages：https://xxoliverxx.github.io/agent-/
 | PDF 生成 | html2pdf.js (CDN) | 预览区转 PDF |
 | 文件下载 | file-saver.js (CDN) | 触发浏览器下载 |
 | Markdown 解析 | marked.js (CDN) | 上传 MD 文件解析 |
+| LaTeX 渲染 | KaTeX (CDN) | 数学公式渲染（预览/HTML/PDF） |
 
 ## 文件结构
 
