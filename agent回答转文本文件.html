@@ -9,6 +9,9 @@
 <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
 <style>
   :root {
     --primary: #1F4E79;
@@ -383,6 +386,47 @@
     text-align: center;
     display: none;
   }
+
+  /* ===== 表格样式 ===== */
+  .preview-content table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+    font-size: 13px;
+  }
+  .preview-content th {
+    background: var(--primary);
+    color: white;
+    padding: 8px 12px;
+    text-align: left;
+    border: 1px solid var(--primary);
+    font-weight: 600;
+  }
+  .preview-content td {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    color: var(--gray);
+  }
+  .preview-content tr:nth-child(even) td {
+    background: #f9fafb;
+  }
+
+  /* plain 模板表格 */
+  [data-template="plain"] table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
+  [data-template="plain"] th { background: #F2F7FB; color: #1F4E79; padding: 8px 12px; border: 1px solid #D0D7DE; font-weight: 700; }
+  [data-template="plain"] td { padding: 6px 12px; border: 1px solid #D0D7DE; color: #595959; }
+  [data-template="plain"] tr:nth-child(even) td { background: #FAFBFC; }
+
+  /* kami 模板表格 */
+  [data-template="kami"] table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
+  [data-template="kami"] th { background: #EEF2F7; color: #1B365D; padding: 8px 12px; border: 1px solid #E8E6DC; font-weight: 500; font-family: "Source Han Serif SC", "Noto Serif CJK SC", "STSong", "SimSun", Georgia, serif; }
+  [data-template="kami"] td { padding: 6px 12px; border: 1px solid #E8E6DC; color: #3D3D3A; }
+  [data-template="kami"] tr:nth-child(even) td { background: #F5F4ED; }
+
+  /* 输入区表格（富文本粘贴后可见） */
+  #inputText table { border-collapse: collapse; width: 100%; margin: 0.5em 0; font-size: 0.9em; }
+  #inputText th, #inputText td { border: 1px solid #d0d7de; padding: 4px 8px; }
+  #inputText th { background: #f2f7fb; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -555,6 +599,22 @@ function htmlToMarkdown(html) {
     if (tag === 'blockquote') return children.trim().split('\n').map(function(line) { return '> ' + line; }).join('\n') + '\n\n';
     if (tag === 'a') { var href = node.getAttribute('href'); return href ? '[' + children + '](' + href + ')' : children; }
     if (tag === 'hr') return '---\n\n';
+    if (tag === 'table') {
+      var trNodes = node.querySelectorAll('tr');
+      var tmd = '';
+      Array.prototype.forEach.call(trNodes, function(row, idx) {
+        var cells = row.querySelectorAll('th,td');
+        var cellTexts = Array.prototype.map.call(cells, function(cell) {
+          return walk(cell).trim().replace(/\|/g, '\\|').replace(/\n/g, ' ');
+        });
+        if (cellTexts.length === 0) return;
+        tmd += '| ' + cellTexts.join(' | ') + ' |\n';
+        if (idx === 0) {
+          tmd += '| ' + cellTexts.map(function() { return '---'; }).join(' | ') + ' |\n';
+        }
+      });
+      return tmd + '\n';
+    }
     return children;
   }
   return Array.prototype.map.call(root.childNodes, walk).join('').replace(/\n{3,}/g, '\n\n').trim();
@@ -593,6 +653,17 @@ function parseContent(text) {
       }
       if (i < lines.length) { codeLines.push(lines[i]); i++; }
       blocks.push({ type: 'code', content: codeLines.join('\n') });
+      continue;
+    }
+
+    // Markdown 表格：| col1 | col2 | 后跟 |---|---|
+    if (isMarkdownTable(lines, i)) {
+      var tableLines = [];
+      while (i < lines.length && lines[i].trim() !== '' && lines[i].trim().indexOf('|') !== -1) {
+        tableLines.push(lines[i].trim());
+        i++;
+      }
+      blocks.push(parseMarkdownTable(tableLines));
       continue;
     }
 
@@ -687,6 +758,34 @@ function parseContent(text) {
   return blocks;
 }
 
+// 检查从第 startIdx 行开始是否是 Markdown 表格
+// 判断：当前行包含 |，且下一行是分隔行（只含 |,-,:,空格）
+function isMarkdownTable(lines, startIdx) {
+  if (startIdx + 1 >= lines.length) return false;
+  var line1 = lines[startIdx].trim();
+  var line2 = lines[startIdx + 1] ? lines[startIdx + 1].trim() : '';
+  if (line1.indexOf('|') === -1) return false;
+  if (!/^\|?[\s\-:|]+$/.test(line2)) return false;
+  if (line2.indexOf('-') === -1) return false;
+  return true;
+}
+
+function parseMarkdownTable(tableLines) {
+  var headers = splitTableRow(tableLines[0]);
+  var rows = [];
+  for (var r = 2; r < tableLines.length; r++) {
+    rows.push(splitTableRow(tableLines[r]));
+  }
+  return { type: 'table', headers: headers, rows: rows };
+}
+
+function splitTableRow(line) {
+  line = line.trim();
+  if (line.charAt(0) === '|') line = line.slice(1);
+  if (line.charAt(line.length - 1) === '|') line = line.slice(0, -1);
+  return line.split('|').map(function(cell) { return cell.trim(); });
+}
+
 function isArrowLine(line) {
   if (line === '↓' || line === '→' || line === '|') return true;
   if (/^[↓→\s|]+$/.test(line) && line.length < 10) return true;
@@ -764,10 +863,25 @@ function highlightInline(text) {
 
 function renderInlineMarkdown(text, alreadyEscaped) {
   var result = alreadyEscaped ? text : escapeHtml(text);
+  // 保护 LaTeX 公式，避免被 * ` 等 markdown 正则误伤
+  var mathStore = [];
+  function stashMath(match) {
+    mathStore.push(match);
+    return '\uF000' + (mathStore.length - 1) + '\uF001';
+  }
+  result = result.replace(/\$\$([\s\S]+?)\$\$/g, stashMath);
+  result = result.replace(/\\\[([\s\S]+?)\\\]/g, stashMath);
+  result = result.replace(/\\\(([\s\S]+?)\\\)/g, stashMath);
+  result = result.replace(/\$([^$\n]+?)\$/g, stashMath);
+  // 处理 markdown 行内语法
   result = result.replace(/`([^`]+)`/g, '<code>$1</code>');
   result = result.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   result = result.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
   result = result.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // 还原 LaTeX 公式（由 KaTeX auto-render 在 DOM 渲染后处理）
+  result = result.replace(/\uF000(\d+)\uF001/g, function(m, idx) {
+    return mathStore[parseInt(idx, 10)];
+  });
   return result;
 }
 
@@ -883,6 +997,18 @@ function renderBlocks(blocks) {
         });
         html += '</' + tag + '>';
         break;
+      case 'table':
+        var tHtml = '<table><thead><tr>';
+        block.headers.forEach(function(h) { tHtml += '<th>' + highlightInline(h) + '</th>'; });
+        tHtml += '</tr></thead><tbody>';
+        block.rows.forEach(function(row) {
+          tHtml += '<tr>';
+          row.forEach(function(cell) { tHtml += '<td>' + highlightInline(cell) + '</td>'; });
+          tHtml += '</tr>';
+        });
+        tHtml += '</tbody></table>';
+        html += tHtml;
+        break;
       case 'code':
         var codeContent = block.content.replace(/^```\w*\n?/, '').replace(/\n?```$/, '');
         html += '<pre><code>' + escapeHtml(codeContent) + '</code></pre>';
@@ -936,6 +1062,18 @@ function renderPreview() {
   parsedBlocks = parseContent(text);
   var html = renderBlocks(parsedBlocks);
   preview.innerHTML = html;
+  // KaTeX 渲染 LaTeX 公式
+  if (typeof renderMathInElement !== 'undefined') {
+    renderMathInElement(preview, {
+      delimiters: [
+        { left: '$$', right: '$$', display: true },
+        { left: '\\[', right: '\\]', display: true },
+        { left: '\\(', right: '\\)', display: false },
+        { left: '$', right: '$', display: false }
+      ],
+      throwOnError: false
+    });
+  }
   updateStatus();
   setExportButtons(true);
 }
@@ -973,6 +1111,14 @@ function exportMd() {
       case 'arrowFlow':
         md += '```\n' + block.content.join('\n') + '\n```\n\n';
         break;
+      case 'table':
+        md += '| ' + block.headers.join(' | ') + ' |\n';
+        md += '| ' + block.headers.map(function() { return '---'; }).join(' | ') + ' |\n';
+        block.rows.forEach(function(row) {
+          md += '| ' + row.join(' | ') + ' |\n';
+        });
+        md += '\n';
+        break;
       case 'list':
         block.items.forEach(function(item, idx) {
           if (block.listType === 'ol') {
@@ -1002,10 +1148,15 @@ function exportHtml() {
   var fullHtml = '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n<meta charset="UTF-8">\n';
   fullHtml += '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n';
   fullHtml += '<title>Agent回答文档</title>\n';
+  fullHtml += '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">\n';
   fullHtml += '<style>\n' + getExportStyles() + '\n</style>\n';
   fullHtml += '</head>\n<body>\n<div class="document">\n';
   fullHtml += contentHtml;
-  fullHtml += '\n</div>\n</body>\n</html>';
+  fullHtml += '\n</div>\n';
+  fullHtml += '<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"><\/script>\n';
+  fullHtml += '<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"><\/script>\n';
+  fullHtml += '<script>renderMathInElement(document.body,{delimiters:[{left:"$$",right:"$$",display:true},{left:"\\\\[",right:"\\\\]",display:true},{left:"\\\\(",right:"\\\\)",display:false},{left:"$",right:"$",display:false}],throwOnError:false});<\/script>\n';
+  fullHtml += '</body>\n</html>';
   var blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
   saveAs(blob, getFilename('html'));
   showToast('HTML 已导出');
@@ -1029,6 +1180,10 @@ function getExportStyles() {
       code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; font-family: "SF Mono", Consolas, monospace; }
       pre code { background: none; padding: 0; }
       strong { color: #${config.h1Color}; }
+      table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
+      th { background: #F2F7FB; color: #1F4E79; padding: 8px 12px; border: 1px solid #D0D7DE; font-weight: 700; }
+      td { padding: 6px 12px; border: 1px solid #D0D7DE; color: #595959; }
+      tr:nth-child(even) td { background: #FAFBFC; }
     `;
   }
 
@@ -1048,6 +1203,10 @@ function getExportStyles() {
       pre code { background: none; padding: 0; border: none; }
       strong { color: #${config.h1Color}; font-weight: 500; }
       ul, ol { color: #${config.bodyColor}; line-height: 1.55; }
+      table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
+      th { background: #EEF2F7; color: #1B365D; padding: 8px 12px; border: 1px solid #E8E6DC; font-weight: 500; font-family: ${config.headingFontFamily}; }
+      td { padding: 6px 12px; border: 1px solid #E8E6DC; color: #3D3D3A; }
+      tr:nth-child(even) td { background: #F5F4ED; }
     `;
   }
 
@@ -1066,6 +1225,10 @@ function getExportStyles() {
     code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; font-family: "SF Mono", Consolas, monospace; }
     pre code { background: none; padding: 0; }
     strong { color: #1F4E79; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
+    th { background: #1F4E79; color: white; padding: 8px 12px; border: 1px solid #1F4E79; font-weight: 600; }
+    td { padding: 6px 12px; border: 1px solid #D0D7DE; color: #595959; }
+    tr:nth-child(even) td { background: #f9fafb; }
   `;
 }
 
@@ -1081,6 +1244,18 @@ function exportPdf() {
   var tempDiv = document.createElement('div');
   tempDiv.style.cssText = 'max-width:700px;margin:0 auto;padding:20px;font-family:-apple-system,"Microsoft YaHei",Arial,sans-serif;color:#333;';
   tempDiv.innerHTML = '<style>' + getExportStyles() + '</style>' + contentHtml;
+  // 渲染 LaTeX 公式到临时容器（KaTeX CSS 已在主页面加载）
+  if (typeof renderMathInElement !== 'undefined') {
+    renderMathInElement(tempDiv, {
+      delimiters: [
+        { left: '$$', right: '$$', display: true },
+        { left: '\\[', right: '\\]', display: true },
+        { left: '\\(', right: '\\)', display: false },
+        { left: '$', right: '$', display: false }
+      ],
+      throwOnError: false
+    });
+  }
 
   var opt = {
     margin: [15, 15, 15, 15],
@@ -1117,14 +1292,14 @@ function exportDocx() {
           var headingLevel = Math.min(block.level, 3);
           children.push(new docxLib.Paragraph({
             children: buildParagraphRuns(block.content, { bold: true, size: headingLevel === 1 ? config.h1Size : (headingLevel === 2 ? config.h2Size : config.h3Size), color: headingLevel === 1 ? config.h1Color : (headingLevel === 2 ? config.h2Color : config.h3Color), font: config.headingFont }),
-            spacing: { before: headingLevel === 1 ? 360 : 240, after: 160 }
+            spacing: { before: headingLevel === 1 ? 280 : (headingLevel === 2 ? 200 : 160), after: headingLevel === 1 ? 100 : (headingLevel === 2 ? 80 : 60), line: 260 }
           }));
           break;
 
         case 'conclusion':
           children.push(new docxLib.Paragraph({
             children: buildParagraphRuns(block.content, { bold: config.name === 'academic', italics: config.name !== 'academic', size: config.bodySize, color: config.conclusionColor, font: config.bodyFont }),
-            spacing: { before: 120, after: 120, line: 300 },
+            spacing: { before: 80, after: 80, line: 280 },
             shading: { fill: config.conclusionBg, type: docxLib.ShadingType.CLEAR },
             indent: { left: 360 }
           }));
@@ -1133,7 +1308,7 @@ function exportDocx() {
         case 'keyConcept':
           children.push(new docxLib.Paragraph({
             children: buildParagraphRuns((config.hardPrefix || '') + block.content, { bold: true, size: config.bodySize, color: config.hardColor, font: config.bodyFont }),
-            spacing: { before: 100, after: 100, line: 300 },
+            spacing: { before: 60, after: 60, line: 280 },
             shading: { fill: config.hardBg, type: docxLib.ShadingType.CLEAR },
             indent: { left: 360 }
           }));
@@ -1142,7 +1317,7 @@ function exportDocx() {
         case 'callout':
           children.push(new docxLib.Paragraph({
             children: buildParagraphRuns(block.content, { italics: true, size: config.bodySize, color: config.softColor, font: config.bodyFont }),
-            spacing: { before: 80, after: 80, line: 300 },
+            spacing: { before: 60, after: 60, line: 280 },
             shading: { fill: config.softBg, type: docxLib.ShadingType.CLEAR },
             indent: { left: 360 }
           }));
@@ -1181,7 +1356,7 @@ function exportDocx() {
           var arrowPara = {
             children: flowRuns,
             alignment: docxLib.AlignmentType.CENTER,
-            spacing: { before: 120, after: 120, line: 360 }
+            spacing: { before: 80, after: 80, line: 300 }
           };
           if (config.arrowBg) {
             arrowPara.shading = { fill: config.arrowBg, type: docxLib.ShadingType.CLEAR };
@@ -1193,10 +1368,39 @@ function exportDocx() {
           block.items.forEach(function(item) {
             children.push(new docxLib.Paragraph({
               children: buildParagraphRuns((block.listType === 'ol' ? '\u2022 ' : '\u2022 ') + item),
-              spacing: { after: 60, line: 300 },
+              spacing: { after: 40, line: 240 },
               indent: { left: 360 }
             }));
           });
+          break;
+
+        case 'table':
+          var headerRow = new docxLib.TableRow({
+            tableHeader: true,
+            children: block.headers.map(function(h) {
+              return new docxLib.TableCell({
+                shading: { fill: config.h1Color, type: docxLib.ShadingType.CLEAR },
+                children: [new docxLib.Paragraph({
+                  children: buildParagraphRuns(h, { bold: true, size: config.bodySize, color: 'FFFFFF', font: config.bodyFont })
+                })]
+              });
+            })
+          });
+          var dataRows = block.rows.map(function(row) {
+            return new docxLib.TableRow({
+              children: row.map(function(cell) {
+                return new docxLib.TableCell({
+                  children: [new docxLib.Paragraph({
+                    children: buildParagraphRuns(cell, { size: config.bodySize, color: config.bodyColor, font: config.bodyFont })
+                  })]
+                });
+              })
+            });
+          });
+          children.push(new docxLib.Table({
+            rows: [headerRow].concat(dataRows),
+            width: { size: 100, type: docxLib.WidthType.PERCENTAGE }
+          }));
           break;
 
         case 'code':
@@ -1208,7 +1412,7 @@ function exportDocx() {
               color: config.bodyColor,
               font: { ascii: 'Courier New', hAnsi: 'Courier New' }
             })],
-            spacing: { before: 80, after: 80 },
+            spacing: { before: 60, after: 60, line: 240 },
             shading: { fill: codeBg, type: docxLib.ShadingType.CLEAR }
           }));
           break;
@@ -1219,7 +1423,7 @@ function exportDocx() {
           var paraRuns = buildParagraphRuns(block.content);
           children.push(new docxLib.Paragraph({
             children: paraRuns,
-            spacing: { after: 100, line: 300 }
+            spacing: { after: 60, line: 260 }
           }));
           break;
       }
@@ -1261,11 +1465,29 @@ function exportDocx() {
 }
 
 // 构建 DOCX 行内 runs：优先还原来源明确给出的粗体/斜体/代码，而非重新猜重点。
+// LaTeX 公式去掉外层分隔符后用 Cambria Math 斜体显示（docx 不支持原生 LaTeX 渲染）。
 function buildParagraphRuns(text, base) {
   var config = getTemplateConfig();
   base = base || { size: config.bodySize, color: config.bodyColor, font: config.bodyFont };
-  var parts = String(text).split(/(\*\*[^*]+\*\*|`[^`]+`|(?<!\*)\*[^*\n]+\*(?!\*))/g);
+  // 保护 LaTeX 公式，避免被 * ` 等 markdown 正则误伤
+  var mathStore = [];
+  var processed = String(text);
+  function stashMath(inner) { mathStore.push(inner); return '\uF000' + (mathStore.length - 1) + '\uF001'; }
+  processed = processed.replace(/\$\$([\s\S]+?)\$\$/g, function(m, inner) { return stashMath(inner); });
+  processed = processed.replace(/\\\[([\s\S]+?)\\\]/g, function(m, inner) { return stashMath(inner); });
+  processed = processed.replace(/\\\(([\s\S]+?)\\\)/g, function(m, inner) { return stashMath(inner); });
+  processed = processed.replace(/\$([^$\n]+?)\$/g, function(m, inner) { return stashMath(inner); });
+
+  var parts = processed.split(/(\*\*[^*]+\*\*|`[^`]+`|(?<!\*)\*[^*\n]+\*(?!\*)|\uF000\d+\uF001)/g);
   return parts.filter(function(part) { return part !== ''; }).map(function(part) {
+    var mathMatch = /^\uF000(\d+)\uF001$/.exec(part);
+    if (mathMatch) {
+      return new docx.TextRun(Object.assign({}, base, {
+        text: mathStore[parseInt(mathMatch[1], 10)],
+        italics: true,
+        font: { ascii: 'Cambria Math', hAnsi: 'Cambria Math' }
+      }));
+    }
     var options = Object.assign({}, base, { text: part });
     if (/^\*\*[^*]+\*\*$/.test(part)) { options.text = part.slice(2, -2); options.bold = true; }
     else if (/^`[^`]+`$/.test(part)) { options.text = part.slice(1, -1); options.font = { ascii: 'Courier New', hAnsi: 'Courier New' }; }
