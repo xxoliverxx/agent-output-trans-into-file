@@ -116,6 +116,7 @@
     background: white;
     color: #333;
     overflow: auto;
+    white-space: pre-wrap;
   }
   #inputText:empty:before { content: attr(data-placeholder); color: #8c959f; white-space: pre-line; }
   #inputText:focus { border-color: var(--secondary); box-shadow: 0 0 0 3px rgba(46,117,182,0.1); }
@@ -622,7 +623,8 @@ function htmlToMarkdown(html) {
 
 function getInputText() {
   var editor = document.getElementById('inputText');
-  return inputOrigin === 'rich' ? htmlToMarkdown(editor.innerHTML) : editor.innerText.replace(/\r/g, '');
+  // text 路径用 textContent 保真读取；innerText 会按渲染折叠换行和缩进，破坏 Markdown 结构
+  return inputOrigin === 'rich' ? htmlToMarkdown(editor.innerHTML) : editor.textContent.replace(/\r/g, '');
 }
 
 // ============ 结构识别器 + 强调标注器 ============
@@ -695,6 +697,33 @@ function parseContent(text) {
       }
     }
 
+    // 多行 display 公式：\[ ... \] 或 $$ ... $$ 跨行时合并为一个段落块，
+    // 避免被逐行切块后 KaTeX 无法配对定界符
+    if ((/^\\\[/.test(trimmed) && !/\\\]/.test(trimmed)) || (/^\\\(/.test(trimmed) && !/\\\)/.test(trimmed))) {
+      var mathLines = [trimmed];
+      i++;
+      while (i < lines.length) {
+        var ml = lines[i].trim();
+        mathLines.push(ml);
+        i++;
+        if (/\\\]$/.test(ml) || /\\\)$/.test(ml)) break;
+      }
+      blocks.push({ type: 'paragraph', content: mathLines.join(' ') });
+      continue;
+    }
+    if (/^\$\$/.test(trimmed) && trimmed.indexOf('$$', 2) === -1) {
+      var ddLines = [trimmed];
+      i++;
+      while (i < lines.length) {
+        var dl = lines[i].trim();
+        ddLines.push(dl);
+        i++;
+        if (/\$\$$/.test(dl)) break;
+      }
+      blocks.push({ type: 'paragraph', content: ddLines.join(' ') });
+      continue;
+    }
+
     // Markdown 标题 ## ###
     var hMatch = /^(#{1,6})\s+(.+)$/.exec(trimmed);
     if (hMatch) {
@@ -703,15 +732,7 @@ function parseContent(text) {
       continue;
     }
 
-    // 标题识别：第X阶段/第X周/Step X/数字.后接冒号/短行无标点
-    var titleMatch = isTitleLine(trimmed);
-    if (titleMatch) {
-      blocks.push({ type: 'heading', level: titleMatch.level, content: trimmed.replace(/[:：]$/, '') });
-      i++;
-      continue;
-    }
-
-    // 列表项：- * • 数字. (1)
+    // 列表项：- * • 数字. (1)——列表标记是强结构信号，优先于标题启发式判断
     var listMatch = /^([-*•]|\d+[.)]|\(\d+\))\s+(.+)$/.exec(trimmed);
     if (listMatch) {
       var listItems = [];
@@ -733,6 +754,14 @@ function parseContent(text) {
         }
       }
       blocks.push({ type: 'list', listType: listType, items: listItems });
+      continue;
+    }
+
+    // 标题识别：第X阶段/第X周/Step X/数字.后接冒号/短行无标点
+    var titleMatch = isTitleLine(trimmed);
+    if (titleMatch) {
+      blocks.push({ type: 'heading', level: titleMatch.level, content: trimmed.replace(/[:：]$/, '') });
+      i++;
       continue;
     }
 
@@ -1036,13 +1065,20 @@ inputText.addEventListener('input', function() {
 inputText.addEventListener('paste', function(event) {
   var clipboard = event.clipboardData;
   var html = clipboard && clipboard.getData('text/html');
-  if (!html) return; // Markdown/纯文本保持浏览器默认输入体验。
   event.preventDefault();
-  var safeHtml = sanitizePastedHtml(html);
-  if (!safeHtml.trim()) { setPlainInput(clipboard.getData('text/plain')); }
-  else { inputText.innerHTML = safeHtml; inputOrigin = 'rich'; }
+  if (html) {
+    var safeHtml = sanitizePastedHtml(html);
+    if (safeHtml.trim()) {
+      inputText.innerHTML = safeHtml;
+      inputOrigin = 'rich';
+      renderPreview();
+      showToast('已保留标题、粗体、列表等结构；已统一来源字号与行距');
+      return;
+    }
+  }
+  // 纯文本/Markdown：走 setPlainInput，保证换行与缩进以纯文本节点保真保存
+  setPlainInput(clipboard ? clipboard.getData('text/plain') : '');
   renderPreview();
-  showToast('已保留标题、粗体、列表等结构；已统一来源字号与行距');
 });
 
 document.getElementById('template').addEventListener('change', renderPreview);
