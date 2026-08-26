@@ -93,16 +93,32 @@
   .upload-area {
     border: 2px dashed var(--border);
     border-radius: 8px;
-    padding: 20px;
+    padding: 16px;
     text-align: center;
-    cursor: pointer;
     transition: all 0.2s;
     background: white;
   }
-  .upload-area:hover { border-color: var(--secondary); background: var(--light-bg); }
   .upload-area.dragover { border-color: var(--secondary); background: var(--light-bg); }
-  .upload-area p { font-size: 12px; color: var(--gray); margin-top: 4px; }
-  #fileInput { display: none; }
+  .upload-area p { font-size: 12px; color: var(--gray); margin-top: 8px; }
+  .upload-actions { display: flex; gap: 12px; justify-content: center; }
+  .upload-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 12px 20px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: white;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s, transform 0.15s;
+  }
+  .upload-btn:hover { border-color: var(--secondary); background: var(--light-bg); }
+  .upload-btn:active { transform: scale(0.97); }
+  .upload-btn .icon { font-size: 22px; }
+  .upload-btn .label { font-size: 13px; font-weight: 600; color: var(--primary); }
+  .upload-btn .hint { font-size: 10px; color: var(--gray); }
+  #mdFileInput, #txtFileInput { display: none; }
   #inputText {
     flex: 1;
     min-height: 200px;
@@ -222,6 +238,12 @@
     line-height: 2;
   }
   .preview-content .arrow-flow .arrow { color: var(--secondary); font-size: 16px; }
+  .preview-content blockquote {
+    border-left: 3px solid var(--secondary);
+    padding: 2px 0 2px 12px;
+    margin: 8px 0;
+    color: var(--gray);
+  }
   .preview-content ul, .preview-content ol {
     margin: 8px 0 8px 24px;
     font-size: 14px;
@@ -327,6 +349,7 @@
   }
   [data-template="plain"] .arrow-flow .arrow { color: #2E75B6; }
   [data-template="plain"] strong { color: #1F4E79; }
+  [data-template="plain"] blockquote { border-left: 3px solid #9bb9d5; color: #54606b; }
   [data-template="plain"] .highlight-word { background: none; color: inherit; font-weight: 600; }
 
   /* ===== 易读重排风 (kami) ===== */
@@ -369,6 +392,7 @@
   }
   [data-template="kami"] .arrow-flow .arrow { color: #6B7280; }
   [data-template="kami"] strong { color: #1B365D; font-weight: 500; }
+  [data-template="kami"] blockquote { border-left: 3px solid #C9C4B4; color: #3D3D3A; font-style: italic; }
   [data-template="kami"] .highlight-word { background: none; color: inherit; font-weight: 500; }
   [data-template="kami"] ul, [data-template="kami"] ol { color: #3D3D3A; line-height: 1.55; }
   [data-template="kami"] code {
@@ -452,10 +476,22 @@
       <span>输入区</span>
       <button class="clear-btn" onclick="clearAll()">清空</button>
     </div>
-    <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
-      <div style="font-size:24px;">📄</div>
-      <p><strong>点击上传</strong> 或拖拽 Markdown / TXT 文件到此处</p>
-      <input type="file" id="fileInput" accept=".md,.txt,.markdown" onchange="handleFile(event)">
+    <div class="upload-area" id="uploadArea">
+      <div class="upload-actions">
+        <button type="button" class="upload-btn" id="uploadMdBtn">
+          <span class="icon">📝</span>
+          <span class="label">Markdown 文件</span>
+          <span class="hint">.md 识别标题/表格/公式/重点</span>
+        </button>
+        <button type="button" class="upload-btn" id="uploadTxtBtn">
+          <span class="icon">📄</span>
+          <span class="label">TXT 文件</span>
+          <span class="hint">.txt 智能识别结构</span>
+        </button>
+      </div>
+      <p>或将文件直接拖拽到此处</p>
+      <input type="file" id="mdFileInput" accept=".md,.markdown" hidden>
+      <input type="file" id="txtFileInput" accept=".txt" hidden>
     </div>
     <div id="inputText" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="或在此处粘贴 Agent 的回答内容…&#10;&#10;会保留标题、加粗、列表和代码；字号、字体与行距会统一为紧凑版式。"></div>
     <div class="controls">
@@ -509,7 +545,8 @@ function showToast(msg, duration) {
   setTimeout(function() { toast.classList.remove('show'); }, duration);
 }
 
-// ============ 文件上传处理 ============
+// ============ 文件上传处理：MD 与 TXT 双入口 ============
+// 独立入口而非自动识别：入口即确定格式，无需猜测内容语法，降低误判
 var uploadArea = document.getElementById('uploadArea');
 uploadArea.addEventListener('dragover', function(e) {
   e.preventDefault();
@@ -526,7 +563,22 @@ uploadArea.addEventListener('drop', function(e) {
   }
 });
 
-function handleFile(event) {
+document.getElementById('uploadMdBtn').addEventListener('click', function() {
+  document.getElementById('mdFileInput').click();
+});
+document.getElementById('uploadTxtBtn').addEventListener('click', function() {
+  document.getElementById('txtFileInput').click();
+});
+document.getElementById('mdFileInput').addEventListener('change', function(e) { handleFile(e, 'md'); });
+document.getElementById('txtFileInput').addEventListener('change', function(e) { handleFile(e, 'txt'); });
+
+// MD 文件专属预处理：剥离 YAML front matter（--- ... --- 元数据块），避免被拆成噪音块
+function stripMdFrontMatter(text) {
+  var m = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(text);
+  return m ? text.slice(m[0].length) : text;
+}
+
+function handleFile(event, format) {
   var file = event.target.files[0];
   if (!file) return;
   var ext = file.name.split('.').pop().toLowerCase();
@@ -534,19 +586,27 @@ function handleFile(event) {
     showToast('仅支持 .md / .txt / .markdown 文件');
     return;
   }
+  var isMd = format === 'md' || ext !== 'txt';
   var reader = new FileReader();
   reader.onload = function(e) {
-    setPlainInput(e.target.result);
+    var text = e.target.result;
+    if (isMd) text = stripMdFrontMatter(text);
+    setPlainInput(text);
     renderPreview();
-    showToast('已加载文件：' + file.name);
+    showToast(isMd
+      ? '已加载 Markdown 文件：' + file.name + '（识别标题/表格/公式/重点）'
+      : '已加载文本文件：' + file.name);
   };
   reader.readAsText(file);
+  // 允许重复选择同一文件时再次触发 change
+  try { event.target.value = ''; } catch (err) {}
 }
 
 // ============ 清空 ============
 function clearAll() {
   setPlainInput('');
-  document.getElementById('fileInput').value = '';
+  document.getElementById('mdFileInput').value = '';
+  document.getElementById('txtFileInput').value = '';
   renderPreview();
 }
 
@@ -757,6 +817,24 @@ function parseContent(text) {
       continue;
     }
 
+    // 重点概念（>> 前缀）：作者显式标记，优先于引用块与标题启发式
+    if (trimmed.startsWith('>>')) {
+      blocks.push({ type: 'keyConcept', content: trimmed.replace(/^>>\s*/, '') });
+      i++;
+      continue;
+    }
+
+    // 引用块：> 开头的连续行（Markdown blockquote，>> 已在上方处理）
+    if (trimmed.charAt(0) === '>') {
+      var quoteLines = [];
+      while (i < lines.length && lines[i].trim().charAt(0) === '>') {
+        quoteLines.push(lines[i].trim().replace(/^>\s*/, ''));
+        i++;
+      }
+      blocks.push({ type: 'blockquote', content: quoteLines });
+      continue;
+    }
+
     // 标题识别：第X阶段/第X周/Step X/数字.后接冒号/短行无标点
     var titleMatch = isTitleLine(trimmed);
     if (titleMatch) {
@@ -772,8 +850,8 @@ function parseContent(text) {
       continue;
     }
 
-    // 重点概念：以 >> 开头或包含「核心/关键/最重要」
-    if (trimmed.startsWith('>>') || /(^|[^a-zA-Z])(核心|关键|最重要|重点|注意)([^a-zA-Z]|$)/.test(trimmed) && trimmed.length < 80) {
+    // 重点概念：包含「核心/关键/最重要」等关键词（>> 前缀已在上方处理）
+    if (/(^|[^a-zA-Z])(核心|关键|最重要|重点|注意)([^a-zA-Z]|$)/.test(trimmed) && trimmed.length < 80) {
       blocks.push({ type: 'keyConcept', content: trimmed.replace(/^>>\s*/, '') });
       i++;
       continue;
@@ -839,6 +917,8 @@ function isInArrowFlowRegion(lines, startIdx) {
 }
 
 function isTitleLine(line) {
+  // 含 LaTeX 定界符（\(\) \[\] $）的行是公式行，不是标题
+  if (/\\[()[\]]|\$/.test(line)) return null;
   // 第X阶段/第X部分
   if (/^第[一二三四五六七八九十\d]+(阶段|部分|章|节|周)/.test(line)) return { level: 1 };
   // Step X / 步骤X
@@ -851,6 +931,8 @@ function isTitleLine(line) {
   // 排除：以常见连词开头的句子、纯英文单词、问句
   if (line.length >= 3 && line.length < 25 && !/[。，；！？、]$/.test(line) && !/[↓→]/.test(line)) {
     if (/[\u4e00-\u9fff]/.test(line)) {
+      // 排除重点/结论行：强调关键词开头且含冒号（核心：/关键点：/总结：等），交给 keyConcept/conclusion
+      if (/^(核心|关键|重点|最重要|总结)/.test(line) && /[：:]/.test(line)) return null;
       // 排除看起来像普通句子的开头
       if (!/^(所以|于是|但是|因为|如果|那么|例如|比如|不过|而且|并且|简单说|注意|问题[：:])/.test(line)) {
         // 排除问句（包含？的）
@@ -1026,6 +1108,11 @@ function renderBlocks(blocks) {
         });
         html += '</' + tag + '>';
         break;
+      case 'blockquote':
+        html += '<blockquote>' + block.content.map(function(line) {
+          return highlightInline(line);
+        }).join('<br>') + '</blockquote>';
+        break;
       case 'table':
         var tHtml = '<table><thead><tr>';
         block.headers.forEach(function(h) { tHtml += '<th>' + highlightInline(h) + '</th>'; });
@@ -1165,6 +1252,9 @@ function exportMd() {
         });
         md += '\n';
         break;
+      case 'blockquote':
+        md += block.content.map(function(line) { return '> ' + line; }).join('\n') + '\n\n';
+        break;
       case 'code':
         md += block.content + '\n\n';
         break;
@@ -1216,6 +1306,7 @@ function getExportStyles() {
       code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; font-family: "SF Mono", Consolas, monospace; }
       pre code { background: none; padding: 0; }
       strong { color: #${config.h1Color}; }
+      blockquote { border-left: 3px solid #9bb9d5; padding: 2px 0 2px 12px; margin: 8px 0; color: #54606b; }
       table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
       th { background: #F2F7FB; color: #1F4E79; padding: 8px 12px; border: 1px solid #D0D7DE; font-weight: 700; }
       td { padding: 6px 12px; border: 1px solid #D0D7DE; color: #595959; }
@@ -1238,6 +1329,7 @@ function getExportStyles() {
       code { background: #EFEEE6; border: 1px solid #E8E6DC; padding: 2px 6px; border-radius: 3px; font-family: "SF Mono", Consolas, monospace; }
       pre code { background: none; padding: 0; border: none; }
       strong { color: #${config.h1Color}; font-weight: 500; }
+      blockquote { border-left: 3px solid #C9C4B4; padding: 2px 0 2px 12px; margin: 8px 0; color: #3D3D3A; font-style: italic; }
       ul, ol { color: #${config.bodyColor}; line-height: 1.55; }
       table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
       th { background: #EEF2F7; color: #1B365D; padding: 8px 12px; border: 1px solid #E8E6DC; font-weight: 500; font-family: ${config.headingFontFamily}; }
@@ -1261,6 +1353,7 @@ function getExportStyles() {
     code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; font-family: "SF Mono", Consolas, monospace; }
     pre code { background: none; padding: 0; }
     strong { color: #1F4E79; }
+    blockquote { border-left: 4px solid #2E75B6; padding: 2px 0 2px 12px; margin: 8px 0; color: #595959; }
     table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
     th { background: #1F4E79; color: white; padding: 8px 12px; border: 1px solid #1F4E79; font-weight: 600; }
     td { padding: 6px 12px; border: 1px solid #D0D7DE; color: #595959; }
@@ -1406,6 +1499,16 @@ function exportDocx() {
               children: buildParagraphRuns((block.listType === 'ol' ? '\u2022 ' : '\u2022 ') + item),
               spacing: { after: 40, line: 240 },
               indent: { left: 360 }
+            }));
+          });
+          break;
+
+        case 'blockquote':
+          block.content.forEach(function(line) {
+            children.push(new docxLib.Paragraph({
+              children: buildParagraphRuns(line, { italics: true, size: config.bodySize, color: config.bodyColor, font: config.bodyFont }),
+              spacing: { after: 40, line: 260 },
+              indent: { left: 480 }
             }));
           });
           break;
